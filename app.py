@@ -23,7 +23,7 @@ st.title("📈 기본 양자 난수(QRNG) 주가 네비게이터")
 st.markdown("정규분포(Box-Muller)로 변환된 양자 난수를 기반으로 기본적인 기하 브라운 운동(GBM) 시뮬레이션을 수행합니다.")
 
 # ==========================================
-# 2. 사이드바 - 파라미터 및 파일 업로드
+# 2. 사이드바 - 파라미터 및 파일 멀티 선택
 # ==========================================
 st.sidebar.header("⚙️ 설정 및 데이터 입력")
 
@@ -32,7 +32,17 @@ TICKER = ticker_input.strip().upper()
 currency_symbol = "₩" if TICKER.endswith(".KS") or TICKER.endswith(".KQ") else "$"
 
 st.sidebar.markdown("---")
-uploaded_file = st.sidebar.file_uploader("난수 데이터 파일 업로드 (.bin)", type=['bin'])
+
+# 💡 [핵심 수정] 드롭다운 메뉴로 원하는 난수 소스를 선택하게 합니다.
+qrng_option = st.sidebar.selectbox(
+    "🎲 사용할 양자 난수(QRNG) 선택",
+    ["양자 난수 세트 1 (기본)", "양자 난수 세트 2 (추가)", "양자 난수 세트 3 (추가)", "PC에서 파일 직접 업로드"]
+)
+
+# "파일 직접 업로드"를 선택했을 때만 파일 업로더 창이 나타나도록 제어
+uploaded_file = None
+if qrng_option == "PC에서 파일 직접 업로드":
+    uploaded_file = st.sidebar.file_uploader("난수 데이터 파일 업로드 (.bin)", type=['bin'])
 
 STEPS = 252              
 NUM_PATHS = 1000         
@@ -40,13 +50,13 @@ NUM_PATHS = 1000
 # ==========================================
 # 3. 메인 로직 연산
 # ==========================================
-if uploaded_file is None:
-    st.info("👈 좌측 사이드바에서 `.bin` 파일을 업로드하면 시뮬레이션이 시작됩니다.")
+# 직접 업로드를 선택했는데 파일을 아직 안 올린 경우 예외 처리
+if qrng_option == "PC에서 파일 직접 업로드" and uploaded_file is None:
+    st.info("👈 좌측 사이드바에서 `.bin` 파일을 직접 업로드하면 시뮬레이션이 시작됩니다.")
 else:
     with st.spinner("데이터 무결성 검사 및 시뮬레이션 연산 중..."):
         try:
-            # --- A. 주가 데이터 로드 (yfinance 버그 완벽 회피 방식) ---
-            # download 대신 Ticker.history 사용 (표 구조가 꼬이지 않는 가장 안전한 방법)
+            # --- A. 주가 데이터 로드 ---
             ticker_obj = yf.Ticker(TICKER)
             data = ticker_obj.history(period="1y")
             
@@ -55,15 +65,8 @@ else:
                 st.stop()
                 
             close_prices = data['Close'].dropna()
-            
-            if len(close_prices) < 5:
-                st.error("과거 주가 데이터가 너무 적습니다.")
-                st.stop()
-
-            # 수익률 계산
             returns = np.log(close_prices / close_prices.shift(1)).dropna()
 
-            # 파라미터 강제 실수(float) 변환
             sigma_annual = float(np.std(returns)) * np.sqrt(252)
             mu_annual = (float(np.mean(returns)) * 252) + (0.5 * sigma_annual**2)
 
@@ -73,13 +76,28 @@ else:
             S0 = float(close_prices.iloc[-1])
             last_date = close_prices.index[-1]
 
-            # 🚨 [안전 장치 1] 주가 데이터 결측치 스캐너
-            if np.isnan(S0) or np.isnan(mu_daily) or np.isnan(sigma_daily):
-                st.error(f"주가 연산 실패: S0={S0}, mu={mu_daily}, sigma={sigma_daily}")
-                st.stop()
+            # --- B. [핵심 수정] 선택한 옵션에 따라 서로 다른 파일 읽어오기 ---
+            if qrng_option == "양자 난수 세트 1 (기본)":
+                target_file = "qrng_data_1.bin"
+            elif qrng_option == "양자 난수 세트 2 (추가)":
+                target_file = "qrng_data_2.bin"
+            elif qrng_option == "양자 난수 세트 3 (추가)":
+                target_file = "qrng_data_3.bin"
+            else:
+                target_file = None # 직접 업로드 모드
 
-            # --- B. QRNG 파일 로드 및 Box-Muller 정규화 ---
-            raw_data = np.frombuffer(uploaded_file.read(), dtype=np.uint8)
+            # 파일 읽기 실행
+            if target_file:
+                try:
+                    with open(target_file, "rb") as f:
+                        raw_data = np.frombuffer(f.read(), dtype=np.uint8)
+                except FileNotFoundError:
+                    st.error(f"서버에 '{target_file}' 파일이 없습니다. 깃허브에 해당 난수 파일을 업로드해주세요.")
+                    st.stop()
+            else:
+                raw_data = np.frombuffer(uploaded_file.read(), dtype=np.uint8)
+
+            # --- 난수 정규화 로직 ---
             u_data = raw_data.astype(np.float32) / 255.0
             u_data[u_data == 0] = np.finfo(float).eps
 
@@ -88,11 +106,6 @@ else:
             u2 = u_data[half:half*2]
 
             z = np.sqrt(-2 * np.log(u1)) * np.cos(2 * np.pi * u2)
-
-            # 🚨 [안전 장치 2] 양자 난수 결측치 스캐너
-            if np.isnan(z).any():
-                st.error("업로드된 난수 데이터 변환 중 오류(NaN)가 발생했습니다. 다른 .bin 파일을 사용해 보세요.")
-                st.stop()
 
             required_z = STEPS * NUM_PATHS
             if len(z) < required_z:
@@ -112,9 +125,9 @@ else:
             st.stop()
 
         # ==========================================
-        # 4. 결과 출력 및 시각화
+        # 4. 결과 출력 및 시각화 (기존과 동일)
         # ==========================================
-        st.success("시뮬레이션 완료! (데이터 무결성 검증 통과)")
+        st.success(f"시뮬레이션 완료! (적용 엔진: {qrng_option})")
         
         final_prices = results[-1, :]
         expected_avg = np.mean(final_prices)
@@ -135,11 +148,9 @@ else:
         with tab1:
             fig1, ax1 = plt.subplots(figsize=(12, 6))
             quantiles = np.percentile(results, [5, 25, 50, 75, 95], axis=1)
-            
             ax1.fill_between(future_dates, quantiles[0], quantiles[4], color='blue', alpha=0.1, label='5% - 95% Range')
             ax1.fill_between(future_dates, quantiles[1], quantiles[3], color='blue', alpha=0.3, label='25% - 75% Range')
             ax1.plot(future_dates, quantiles[2], color='navy', linewidth=2, label='Median Path (50%)')
-            
             ax1.set_title(f"[{TICKER}] 1-Year Future Price Projection", fontsize=15, fontweight='bold')
             ax1.set_ylabel(f"Predicted Price ({currency_symbol})")
             ax1.legend(loc='upper left')
@@ -151,7 +162,6 @@ else:
         with tab2:
             fig2, ax2 = plt.subplots(figsize=(12, 6))
             ax2.plot(future_dates, results[:, :50], alpha=0.6)
-            
             ax2.set_title(f"[{TICKER}] 50 Random Future Path Scenarios", fontsize=15, fontweight='bold')
             ax2.set_ylabel(f"Predicted Price ({currency_symbol})")
             ax2.grid(True, linestyle='--', alpha=0.6)
@@ -162,11 +172,9 @@ else:
         with tab3:
             fig3, ax3 = plt.subplots(figsize=(12, 6))
             ax3.hist(final_prices, bins=50, color='skyblue', edgecolor='black', alpha=0.8)
-
             ax3.axvline(S0, color='red', linestyle='dashed', linewidth=2, label=f"Current: {format_price(S0, currency_symbol)}")
             ax3.axvline(expected_avg, color='green', linestyle='dashed', linewidth=2, label=f"Average: {format_price(expected_avg, currency_symbol)}")
             ax3.axvline(expected_median, color='navy', linestyle='dashed', linewidth=2, label=f"Median: {format_price(expected_median, currency_symbol)}")
-
             ax3.set_title(f"[{TICKER}] Expected Price Distribution on {final_date_str}", fontsize=15, fontweight='bold')
             ax3.set_xlabel(f"Final Price ({currency_symbol})")
             ax3.set_ylabel("Frequency")

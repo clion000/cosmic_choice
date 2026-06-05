@@ -33,13 +33,11 @@ currency_symbol = "₩" if TICKER.endswith(".KS") or TICKER.endswith(".KQ") else
 
 st.sidebar.markdown("---")
 
-# 💡 [핵심 수정] 드롭다운 메뉴로 원하는 난수 소스를 선택하게 합니다.
 qrng_option = st.sidebar.selectbox(
     "🎲 사용할 양자 난수(QRNG) 선택",
     ["양자 난수 세트 1 (기본)", "양자 난수 세트 2 (추가)", "양자 난수 세트 3 (추가)", "PC에서 파일 직접 업로드"]
 )
 
-# "파일 직접 업로드"를 선택했을 때만 파일 업로더 창이 나타나도록 제어
 uploaded_file = None
 if qrng_option == "PC에서 파일 직접 업로드":
     uploaded_file = st.sidebar.file_uploader("난수 데이터 파일 업로드 (.bin)", type=['bin'])
@@ -50,7 +48,6 @@ NUM_PATHS = 1000
 # ==========================================
 # 3. 메인 로직 연산
 # ==========================================
-# 직접 업로드를 선택했는데 파일을 아직 안 올린 경우 예외 처리
 if qrng_option == "PC에서 파일 직접 업로드" and uploaded_file is None:
     st.info("👈 좌측 사이드바에서 `.bin` 파일을 직접 업로드하면 시뮬레이션이 시작됩니다.")
 else:
@@ -76,7 +73,7 @@ else:
             S0 = float(close_prices.iloc[-1])
             last_date = close_prices.index[-1]
 
-            # --- B. [핵심 수정] 선택한 옵션에 따라 서로 다른 파일 읽어오기 ---
+            # --- B. 선택한 옵션에 따라 파일 읽어오기 ---
             if qrng_option == "양자 난수 세트 1 (기본)":
                 target_file = "qrng_data_1.bin"
             elif qrng_option == "양자 난수 세트 2 (추가)":
@@ -84,9 +81,8 @@ else:
             elif qrng_option == "양자 난수 세트 3 (추가)":
                 target_file = "qrng_data_3.bin"
             else:
-                target_file = None # 직접 업로드 모드
+                target_file = None
 
-            # 파일 읽기 실행
             if target_file:
                 try:
                     with open(target_file, "rb") as f:
@@ -125,7 +121,7 @@ else:
             st.stop()
 
         # ==========================================
-        # 4. 결과 출력 및 시각화 (기존과 동일)
+        # 4. 결과 출력 및 시각화
         # ==========================================
         st.success(f"시뮬레이션 완료! (적용 엔진: {qrng_option})")
         
@@ -160,9 +156,11 @@ else:
             plt.close(fig1)
 
         with tab2:
+            st.subheader("5 Random Future Path Scenarios")
             fig2, ax2 = plt.subplots(figsize=(12, 6))
-            ax2.plot(future_dates, results[:, :50], alpha=0.6)
-            ax2.set_title(f"[{TICKER}] 50 Random Future Path Scenarios", fontsize=15, fontweight='bold')
+            # 50개에서 5개로 추출 개수 제한 및 선 굵기 조정
+            ax2.plot(future_dates, results[:, :5], alpha=0.8, linewidth=1.5) 
+            ax2.set_title(f"[{TICKER}] 5 Random Future Path Scenarios", fontsize=15, fontweight='bold')
             ax2.set_ylabel(f"Predicted Price ({currency_symbol})")
             ax2.grid(True, linestyle='--', alpha=0.6)
             ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
